@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UpCalc Bot</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: #1e1f22;
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    /* Корневой блок чата */
+    .panel {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;  
+      background: #1e1f22;
+      width: 100%;
+      max-width: 700px;                
+      height: 92vh;
+      max-height: 860px;
+      border: 1px solid #3a3b3f;
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 12px 30px rgba(0,0,0,.35);
+    }
+    /* Лента сообщений: снизу-вверх за счёт column-reverse */
+    .feed {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column-reverse;  
+      padding: 18px;
+      gap: 16px;
+      scroll-behavior: smooth;
+    }
+    /* Один ряд (аватар + бублик) */
+    .bubble-row {
+      display: flex;
+      align-items: flex-end;
+      max-width: 82%;                   
+    }
+    .bubble-row.me {
+      align-self: flex-end;
+      flex-direction: row-reverse;
+    }
+    .bubble-row.bot {
+      align-self: flex-start;
+    }
+    .avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      margin: 0 10px;
+      object-fit: cover;
+      background: #2a2b30;
+    }
+    .bubble {
+      padding: 12px 16px;
+      border-radius: 18px;
+      background: #f3f3f5;
+      color: #0f1115;
+      line-height: 1.35;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+    }
+    .me .bubble {
+      background: #ffd257;  
+      color: #0d0d0d;
+    }
+    /* Компонент ввода */
+    .composer {
+      display: flex;
+      align-items: center;
+      background: #ffffff;
+      padding: 10px 14px;
+      border-top: 1px solid #d7d7db;
+      border-radius: 0 0 22px 22px;
+      gap: 10px;
+    }
+    .composer__input {
+      flex: 1;
+      border: none;
+      font-size: 16px;
+      padding: 12px 14px;
+      border-radius: 22px;
+      background: #f5f6f8;
+      outline: none;
+      min-width: 0;
+    }
+    .composer__btn {
+      background: #c9c9cf; 
+      border: none;
+      border-radius: 50%;
+      padding: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: not-allowed;
+      transition: background .25s ease, transform .15s ease, opacity .2s ease;
+      opacity: .65;
+      width: 44px;
+      height: 44px;
+    }
+    .composer__btn.is-live {
+      background: #ffd257;   
+      cursor: pointer;
+      opacity: 1;
+    }
+    .composer__btn.is-live:hover {
+      background: #ffbf2a;
+      transform: scale(1.06);
+    }
+    .icon {
+      width: 22px;
+      height: 22px;
+      display: block;
+    }
+    /* Индикатор печати */
+    .dots-typing {
+      margin-left: 48px;
+      display: flex;
+      gap: 5px;
+      align-items: center;
+    }
+    .dots-typing span {
+      width: 8px;
+      height: 8px;
+      background: #a1a4ab;
+      border-radius: 50%;
+      animation: blink 1s infinite;
+    }
+    .dots-typing span:nth-child(2) { animation-delay: .18s; }
+    .dots-typing span:nth-child(3) { animation-delay: .36s; }
+    @keyframes blink {
+      0%, 80%, 100% { opacity: 0; }
+      40% { opacity: 1; }
+    }
+    /* Мелкие улучшения прокрутки */
+    .feed::-webkit-scrollbar { width: 10px; }
+    .feed::-webkit-scrollbar-thumb {
+      background: #2d2f36;
+      border-radius: 8px;
+    }
+    .feed::-webkit-scrollbar-track { background: #1b1c1f; }
+    @media (max-width: 480px) {
+      .panel { height: 88vh; }
+      .bubble-row { max-width: 92%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="feed" id="feed"></div>
+    <div class="composer">
+      <input type="text" id="composerInput" class="composer__input" placeholder="Напишите команду...">
+      <button id="composerBtn" class="composer__btn" disabled aria-label="Отправить">
+        <svg class="icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // Получаем узлы
+    const feedEl = document.getElementById('feed');
+    const composerInput = document.getElementById('composerInput');
+    const composerBtn = document.getElementById('composerBtn');
+
+    // Состояние
+    let nickname = '';
+    let pair = [];
+
+    // Добавить строку (сообщение) в ленту
+    function pushLine(text, iAmUser = false) {
+      const row = document.createElement('div');
+      row.className = 'bubble-row ' + (iAmUser ? 'me' : 'bot');
+
+      const img = document.createElement('img');
+      img.className = 'avatar';
+      img.alt = iAmUser ? 'Вы' : 'Бот';
+      img.src = iAmUser
+        ? 'user_avatar.png'
+        : 'bot_avatar.png';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+
+      row.appendChild(img);
+      row.appendChild(bubble);
+      feedEl.prepend(row);
+    }
+
+    // Индикатор печати
+    function showDots() {
+      const ind = document.createElement('div');
+      ind.className = 'dots-typing bot';
+      ind.innerHTML = '<span></span><span></span><span></span>';
+      ind.id = 'typingDots';
+      feedEl.prepend(ind);
+    }
+    function hideDots() {
+      const el = document.getElementById('typingDots');
+      if (el) el.remove();
+    }
+
+    function routeCmd(raw) {
+      const cmd = raw.trim();
+
+      if (cmd === '/start') {
+        return 'Привет! Я UpCalc Bot. Как тебя зовут? Напиши /name: Имя';
+      }
+
+      if (cmd.startsWith('/name:')) {
+        nickname = cmd.split(':')[1].trim();
+        if (!nickname) return 'Имя пустое. Формат: /name: Артём';
+        return `Привет, ${nickname}! Введи два числа в формате /number: a, b`;
+      }
+
+      if (cmd.startsWith('/number:')) {
+        const nums = cmd.split(':')[1]
+          .split(',')
+          .map(n => Number(n.trim()))
+          .filter(n => !Number.isNaN(n));
+        if (nums.length === 2) {
+          pair = nums;
+          return 'Выбери операцию: +  -  *  /';
+        }
+        return 'Нужно два числа через запятую. Пример: /number: 7, 3';
+      }
+
+      if (['+', '-', '*', '/'].includes(cmd) && pair.length === 2) {
+        const [a, b] = pair;
+        let res;
+        switch (cmd) {
+          case '+': res = a + b; break;
+          case '-': res = a - b; break;
+          case '*': res = a * b; break;
+          case '/': res = (b !== 0) ? (a / b).toFixed(2) : 'Ошибка: деление на ноль'; break;
+        }
+        pair = [];
+        return `Результат: ${res}`;
+      }
+
+      if (cmd === '/stop') {
+        return 'До встречи! Чтобы начать заново — /start';
+      }
+
+      return 'Не понимаю команду. Доступно: /start, /name:, /number:, +, -, *, /, /stop';
+    }
+
+    composerInput.addEventListener('input', () => {
+      const active = composerInput.value.trim().length > 0;
+      composerBtn.classList.toggle('is-live', active);
+      composerBtn.disabled = !active;
+    });
+
+    composerBtn.addEventListener('click', () => {
+      const text = composerInput.value.trim();
+      if (!text) return;
+      pushLine(text, true);
+      composerInput.value = '';
+      composerBtn.classList.remove('is-live');
+      composerBtn.disabled = true;
+
+      showDots();
+      setTimeout(() => {
+        hideDots();
+        pushLine(routeCmd(text), false);
+      }, 750);
+    });
+
+    composerInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        composerBtn.click();
+      }
+    });
+  </script>
+</body>
+</html>
